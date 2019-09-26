@@ -13,4 +13,4 @@ jobs:
       run: echo Hello, world!
     - name: Run tests
       run: |
-        xcodebuild -workspace MyDay.xcworkspace -scheme MyDay -sdk iphonesimulator -destination 'platform=iOS Simulator, OS=12.4, name=iPhone 6' test
+        xcodebuild -workspace MyDay.xcworkspace -scheme MyDay -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 6,OS=12.4 ' test
