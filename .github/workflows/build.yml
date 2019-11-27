@@ -3,7 +3,7 @@ name: Build
 on: [push, pull_request]
 
 jobs:
-  build:
+  build
 
     runs-on: macOS-latest
     
@@ -14,3 +14,15 @@ jobs:
     - name: Run tests
       run: |
         xcodebuild -workspace MyDay.xcworkspace -scheme MyDay -sdk iphonesimulator -destination 'platform=iOS Simulator,OS=12.4,name=iPhone X' test  | xcpretty
+        
+  testflight:
+    needs: build
+  
+  runs-on: macOS-latest
+  steps:
+    
+    -run: echo "Deployment Done"
+    
+   
+
+  
