@@ -10,6 +10,8 @@ import UIKit
 
 protocol AddTasker: class {
 	func addTask(with text: String)
+	func showNextPage()
+	func showPrevPage()
 }
 
 class AddTaskView: UIView, UITextFieldDelegate {
@@ -18,12 +20,13 @@ class AddTaskView: UIView, UITextFieldDelegate {
 	@IBOutlet weak var addTaskLabel: UILabel!
 	@IBOutlet weak var addTaskTextField: UITextField!
 	@IBOutlet weak var addTaskButton: UIButton!
-	@IBOutlet weak var addTaskButtonHeightConstraint: NSLayoutConstraint!
+//	@IBOutlet weak var addTaskButtonHeightConstraint: NSLayoutConstraint!
+	
+	@IBOutlet weak var addTaskViewBottomConstraint: NSLayoutConstraint!
 	
 	private let circleImage = UIImage(systemName: "circle")
 	private let plusImage = UIImage(systemName: "plus")
-	private let defaultViewHeight = CGFloat(60)
-	
+		
 	weak var tasker: AddTasker? 
 	
 	override func awakeFromNib() {
@@ -41,6 +44,7 @@ class AddTaskView: UIView, UITextFieldDelegate {
 	}
 	
 	func bringFocusToAddTaskTextField() {
+		
 		self.setActiveViewMode()
 		addTaskTextField.becomeFirstResponder()
 	}
@@ -61,6 +65,7 @@ class AddTaskView: UIView, UITextFieldDelegate {
 	}
 	
 	private func setDefaultViewMode() {
+
 		addTaskTextField.isHidden = true
 		addTaskLabel.isHidden = false
 		addTaskButton.isHidden = false
@@ -68,6 +73,7 @@ class AddTaskView: UIView, UITextFieldDelegate {
 	}
 	
 	private func setActiveViewMode() {
+	
 		addTaskTextField.isHidden = false
 		addTaskLabel.isHidden = true
 		addTaskButton.isHidden = true
@@ -82,9 +88,11 @@ class AddTaskView: UIView, UITextFieldDelegate {
 	}
 	
 	private func adjustAddTaskView(height: CGFloat, keyboard isVisible: Bool) {
-		addTaskButtonHeightConstraint.constant = isVisible ? height : defaultViewHeight
+		
+		self.addTaskViewBottomConstraint.constant = isVisible ? -height : CGFloat.zero
 		UIView.animate(withDuration: 0.25) {
-			self.layoutIfNeeded()
+			
+//			self.layoutIfNeeded()
 		}
 	}
 

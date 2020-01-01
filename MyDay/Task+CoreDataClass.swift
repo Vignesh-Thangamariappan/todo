@@ -37,4 +37,21 @@ public class Task: NSManagedObject {
 		
 		return tasks
 	}
+	
+	class func getAllDocuments(in context: NSManagedObjectContext) -> [[String: Any]] {
+		var documents: [[String: Any]] = [[:]]
+		context.performAndWait {
+			if let tasks = Task.mr_findAll(in: context) as? [Task] {
+				documents = tasks.map({FIRTask(task: $0).dictionary})
+			}
+		}
+		return documents
+	}
+	
+	
+//	class func getTasks(from startDate: Date, toDate: Date, in context: NSManagedObjectContext = NSManagedObjectContext.mr_default()) -> NSFetchedResultsController<NSFetchRequestResult> {
+//		
+//		
+//		self.mr_fetchAllGrouped(by: "modifiedDate", with: <#T##NSPredicate?#>, sortedBy: "modifiedDate", ascending: true)
+//	}
 }

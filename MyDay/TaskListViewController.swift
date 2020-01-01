@@ -2,357 +2,265 @@
 //  TaskListViewController.swift
 //  MyDay
 //
-//  Created by Sam on 1/14/18.
-//  Copyright © 2018 samsonsunny. All rights reserved.
+//  Created by Sam on 11/30/19.
+//  Copyright © 2019 samsonsunny. All rights reserved.
 //
 
 import UIKit
-import MagicalRecord
+import FirebaseFirestore
+import FirebaseAuth
 
-let userDefaults: UserDefaults = UserDefaults.standard
+extension Date {
+	var totalDaysInYear: Int {
+		return self.isLeapYear ? 366 : 365
+	}
+}
+
+class DateHelper {
+	
+	let startDate = Date().dateAtStartOf(.year).date
+	let endDate = Date().dateAtStartOf(.year).date.dateByAdding(2, .year).date
+	let today = Date().dateAtStartOf(.day).date
+	
+	var indexForToday: Int {
+		return twoYearsOfDates.firstIndex(of: today) ?? 0
+	}
+	
+	var twoYearTotalDays: Int {
+		return startDate.totalDaysInYear + endDate.totalDaysInYear
+	}
+	
+	var dateForSection352: Date {
+		return startDate.dateByAdding(352, .day).date
+	}
+	
+	var twoYearsOfDates: [Date] {
+		var dates: [Date] = []
+		for i in 0 ..< twoYearTotalDays {
+			dates.append(startDate.dateByAdding(i, .day).date)
+		}
+		return dates
+	}
+}
 
 class TaskListViewController: KeyboardViewController {
-	
-	@IBOutlet weak var todayButton: RoundedButton!
-	@IBOutlet weak var editButton: RoundedButton!
-	
-	@IBOutlet fileprivate weak var addTaskView: UIView!
-	@IBOutlet fileprivate weak var addTaskTextField: UITextField!
-	@IBOutlet fileprivate weak var addTaskButton: UIButton!
-	@IBOutlet fileprivate weak var todoListView: UITableView!
-	@IBOutlet fileprivate weak var greyCircleButton: UIButton!
-	@IBOutlet fileprivate weak var plusButton: UIButton!
-	@IBOutlet fileprivate weak var addTaskLabel: UILabel!
-	@IBOutlet fileprivate weak var addTaskViewBottomLayout: NSLayoutConstraint!
-	@IBOutlet weak var pageTitle: UILabel!
-	@IBOutlet fileprivate weak var subtitle: UILabel!
-	
-	weak var paginationHandler: TaskPageDelegate? 
-	
-	var pageNumber: Int = 0
-	
-	var activeDate: Date = Date().dateAtStartOf(.day) {
-		didSet {
-			refetchTasks()
-			updateHeader()
-		}
-	}
-	
-	var tasks: [Task] = []
-	
-	private lazy var tapGesture: UITapGestureRecognizer = {
-		let gesture = UITapGestureRecognizer(target: self, action: #selector(listViewTapped))
-		gesture.cancelsTouchesInView = false
-		gesture.delegate = self
-		return gesture
+
+	@IBOutlet weak var taskCalendarListView: UITableView!
+		
+	lazy var dummyView: UIButton = {
+		let button = UIButton(frame: CGRect(origin: CGPoint.zero, size: self.view.bounds.size))
+		button.addTarget(self, action: #selector(tapOutside), for: .touchUpInside)
+		return button
 	}()
 	
+	var keyWindow: UIWindow? {
+		return UIApplication.shared.keyWindow
+	}
+	
+	var addTaskView: CreateTaskView!
+	let addTaskViewHeight = CGFloat(100)
+	var layer: CAGradientLayer!
+	var taskRef: CollectionReference!
+	let calendarDates = DateHelper().twoYearsOfDates
+	let todaySection = DateHelper().indexForToday
+	var taskPerDate: [Date: [FIRTask]] = [:]
+	
+	var userID: String? {
+		return Auth.auth().currentUser?.uid
+	}
+	
+	var activeDate = Date()
+	
+	var allTasks: [FIRTask] = [] {
+		didSet {
+			taskPerDate = [:]
+			groupTasksByDate(tasks: allTasks)
+			DispatchQueue.main.async {
+				self.taskCalendarListView.reloadData()
+			}
+		}
+	}
+	
 	override func viewDidLoad() {
-		super.viewDidLoad()
-		// Do any additional setup after loading the view.
-		
-		todoListView.delegate = self
-		todoListView.dataSource = self
-		todoListView.allowsSelection = true
-		todoListView.addGestureRecognizer(tapGesture)
-		addTaskTextField.delegate = self
-		activeDate = Date().dateAtStartOf(.day).dateByAdding(pageNumber, .day).date
-		toggleTodayButton()
-		toggleEditButton()
-	}
-	
-	func toggleTodayButton() {
-		if activeDate.isToday {
-			todayButton.isUserInteractionEnabled = false
-			todayButton.tintColor = UIColor.gray
-		} else if todoListView.isEditing {
-			todayButton.isUserInteractionEnabled = false
-			todayButton.tintColor = UIColor.gray
-		} else {
-			todayButton.isUserInteractionEnabled = true
-			todayButton.tintColor = UIColor.systemIndigo
+        super.viewDidLoad()
+		self.title = "Everyday"
+		taskRef = Firestore.firestore().collection("tasks")
+		setupTaskListView()
+		setupAddTaskView()
+		scrollToToday()
+		loadTasks {
+			self.scrollToToday()
 		}
-	}
+    }
 	
-	func toggleEditButton() {
-//		if tasks.isEmpty {
-//			editButton.isHidden = true
-//			self.todoListView.setEditing(false, animated: true)
-//		} else {
-//			editButton.isHidden = false
-//		}
-	}
-	
-	func toggleAddTaskButton() {
-		if todoListView.isEditing {
-			addTaskView.isHidden = true
-		} else {
-			addTaskView.isHidden = false
-		}
-	}
-	
-	override func viewWillAppear(_ animated: Bool) {
-		super.viewWillAppear(animated)
-		
-		if activeDate.isToday {
-			pageTitle.textColor = UIColor(named: "HighlightColor")
-		}
-	}
-	
-	override func viewWillDisappear(_ animated: Bool) {
-		super.viewWillDisappear(animated)
-		removeFoucsFromAddTaskField()
-		adjustAddTaskView(height: 0, keyboard: false)
-	}
-	
-	@IBAction func todayButtonTapped(_ sender: Any) {
-		paginationHandler?.didTodayButtonTapped()
-	}
-	
-	@IBAction func editButtonTapped(_ sender: Any) {
-		
-		if editButton.image(for: .normal) == UIImage(systemName: "ellipsis") {
-			self.todoListView.setEditing(true, animated: true)
-			editButton.setTitle("Done", for: .normal)
-			editButton.setImage(nil, for: .normal)
-			removeFoucsFromAddTaskField()
-		} else {
-			self.todoListView.setEditing(false, animated: true)
-			editButton.setImage(UIImage(systemName: "ellipsis"), for: .normal)
-			editButton.setTitle(nil, for: .normal)
-		}
-		
-		toggleAddTaskButton()
-		toggleTodayButton()
-	}
-	
-	@IBAction func addNewTask(_ sender: Any) {
-		bringFoucsToAddTaskField()
-	}
-	
-	override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-		self.view.endEditing(true)
-		removeFoucsFromAddTaskField()
-	}
-	
-	@objc func listViewTapped() {
-		
-		if addTaskTextField.isFirstResponder {
-			removeFoucsFromAddTaskField()
-		} else {
-			bringFoucsToAddTaskField()
-		}
-	}
-	
-	@objc override func keyBoardWillHide(_ notification: NSNotification) {
-		handleKeyboard(with: notification, keyboardWillShow: false)
-	}
-	
-	@objc override func keyBoardWillShow(_ notification: NSNotification) {
-		handleKeyboard(with: notification, keyboardWillShow: true)
-	}
-	
-	func updateHeader() {
-
-		if activeDate.isToday {
-			pageTitle.text = activeDate.toFormat("MMM d").uppercased()
-			subtitle.text = activeDate.toFormat("EEEE").uppercased()
-		} else if activeDate.isTomorrow {
-			pageTitle.text = activeDate.toFormat("MMM d").uppercased()
-			subtitle.text = activeDate.toFormat("EEEE").uppercased()
-		} else if activeDate.isYesterday {
-			pageTitle.text = activeDate.toFormat("MMM d").uppercased()
-			subtitle.text = activeDate.toFormat("EEEE").uppercased()
-		} else {
-			pageTitle.text = activeDate.toFormat("MMM d").uppercased()
-			subtitle.text = activeDate.toFormat("EEEE").uppercased()
-		}
-	}
-
-	fileprivate func handleKeyboard(with notification: NSNotification, keyboardWillShow: Bool) {
-		let keyboardHeight = getKeyboardHeight(from: notification.userInfo)
-		adjustAddTaskView(height: keyboardHeight, keyboard: keyboardWillShow)
-	}
-	
-	fileprivate func getKeyboardHeight(from notificationPayload: [AnyHashable : Any]?) -> CGFloat {
-		guard let keyboardFrame = notificationPayload?["UIKeyboardBoundsUserInfoKey"] as? CGRect else {
-			return 0
-		}
-		return keyboardFrame.size.height
-	}
-	
-	fileprivate func adjustAddTaskView(height: CGFloat, keyboard isVisible: Bool) {
-		self.addTaskViewBottomLayout.constant = isVisible ? height: 0
+	override func keyBoardWillHide(_ notification: NSNotification) {
 		UIView.animate(withDuration: 0.25) {
+			if let window = self.keyWindow {
+				self.addTaskView.frame.origin = CGPoint(x: 0, y: window.frame.height)
+			}
 			self.view.layoutIfNeeded()
 		}
 	}
 	
-	fileprivate func removeFoucsFromAddTaskField() {
-		addTaskTextField.resignFirstResponder()
-		UIView.animate(withDuration: 0.25, animations: {
-			self.updateTextAfterRemovingFocus()
+	override func keyBoardWillShow(_ notification: NSNotification) {
+		UIView.animate(withDuration: 0.25) {
+			if let window = self.keyWindow {
+				let y = window.frame.height - self.getKeyboardHeight(from: notification.userInfo) - self.addTaskViewHeight
+				self.addTaskView.frame.origin = CGPoint(x: 0, y: y)
+			}
+			self.view.layoutIfNeeded()
+		}
+	}
+	
+	@objc func tapOutside() {
+		hideAddTaskView()
+	}
+	
+	func setupTaskListView() {
+		taskCalendarListView.delegate = self
+		taskCalendarListView.dataSource = self
+		taskCalendarListView.scrollsToTop = false
+	}
+	
+	func setupAddTaskView() {
+		addLayer()
+		if let window = keyWindow {
+			let frame = CGRect(x: 0, y: window.bounds.height, width: window.bounds.width, height: addTaskViewHeight)
+			addTaskView = CreateTaskView(frame: frame)
+			addTaskView.isHidden = false
+			window.addSubview(addTaskView)
+		}
+		addTaskView.saveButton.addTarget(self, action: #selector(saveTask), for: .touchUpInside)
+	}
+	
+	func addLayer() {
+		layer = CAGradientLayer()
+		layer.colors = [UIColor.black.cgColor, UIColor.black.cgColor]
+		layer.locations = [0.0 , 1.0]
+		layer.startPoint = CGPoint(x: 0.0, y: 1.0)
+		layer.endPoint = CGPoint(x: 1.0, y: 1.0)
+		layer.frame = CGRect(x: 0.0, y: 0.0, width: self.view.frame.size.width, height: self.view.frame.size.height)
+		layer.opacity = 0.5
+		dummyView.layer.insertSublayer(layer, at: 0)
+		dummyView.isHidden = true
+		self.view.addSubview(dummyView)
+	}
+	
+	func getKeyboardHeight(from notificationPayload: [AnyHashable : Any]?) -> CGFloat {
+		if let frame = notificationPayload?["UIKeyboardBoundsUserInfoKey"] as? CGRect {
+			return frame.size.height
+		}
+		return 0
+	}
+	
+	func hideAddTaskView() {
+		addTaskView.textField.resignFirstResponder()
+		addTaskView.isHidden = true
+		dummyView.isHidden = true
+	}
+	
+	func showAddTaskView() {
+		addTaskView.isHidden = false
+		addTaskView.textField.becomeFirstResponder()
+		dummyView.isHidden = false
+	}
+	
+	func groupTasksByDate(tasks: [FIRTask]) {
+		tasks.forEach { (task) in
+			if let tasks = taskPerDate[task.dueOn] {
+				var totalTasks = tasks
+				totalTasks.append(task)
+				taskPerDate[task.dueOn] = Array(Set(totalTasks)).sorted(by: { (task1, task2) -> Bool in
+					return task1.createdOn < task2.createdOn
+				})
+			} else {
+				taskPerDate[task.dueOn] = [task]
+			}
+		}
+	}
+	
+	func resetAddTaskView() {
+		hideAddTaskView()
+		addTaskView.textField.text = ""
+	}
+	
+	@objc func saveTask() {
+		if let title = addTaskView.textField.text, let uid = userID {
+			createTask(title: title, dueOn: activeDate, createdBy: uid, isCompleted: false)
+		}
+	}
+	
+	func createTask(title: String, dueOn: Date, createdBy: String, isCompleted: Bool) {
+		let task = FIRTask(title:  title, dueOn: dueOn, createdBy: createdBy, createdOn: Date(), completed: isCompleted)
+		taskRef.addDocument(data: task.dictionary)
+		loadTasks {
+			let section = self.calendarDates.firstIndex(of: dueOn) ?? self.todaySection
+			self.taskCalendarListView.scrollToRow(at: IndexPath(row: 0, section: section), at: .top, animated: true)
+			self.resetAddTaskView()
+		}
+	}
+	
+	func updateTask(on indexPath: IndexPath, completed: Bool) {
+		if var task = getTask(forIndexPath: indexPath) {
+			task.isCompleted = completed
+			taskRef.document(task.key).setData(task.dictionary)
+		}
+		loadTasks {
+			self.resetAddTaskView()
+		}
+	}
+	
+	func deleteTask(on indexPath: IndexPath) {
+		if let task = getTask(forIndexPath: indexPath) {
+			taskRef.document(task.key).delete()
+		}
+		loadTasks {}
+	}
+	
+	private func loadTasks(completion: @escaping () -> Void) {
+		guard let uid = userID else {
+			completion()
+			return
+		}
+		fetchTasks(byUserID: uid) { (firTasks) in
+			if let tasks = firTasks {
+				self.allTasks = tasks
+			}
+			completion()
+		}
+	}
+	
+	private func fetchTasks(byUserID uid: String, completion: @escaping ([FIRTask]?) -> Void) {
+		taskRef.whereField("created_by", isEqualTo: uid).getDocuments(source: .cache, completion: { (snapshot, error) in
+			let tasks = self.getFIRTasks(byParsingFirestoreSnapshot: snapshot)
+			completion(tasks)
 		})
 	}
 	
-	fileprivate func updateTextAfterRemovingFocus() {
-		if let todoText = addTaskTextField.text, todoText.isNotEmpty {
-			addTaskTextField.isHidden = false
-			addTaskLabel.isHidden = true
-			addTaskButton.isHidden = true
-			plusButton.isHidden = true
-			greyCircleButton.isHidden = false
-		} else {
-			addTaskTextField.isHidden = true
-			addTaskLabel.isHidden = false
-			addTaskButton.isHidden = false
-			plusButton.isHidden = false
-			greyCircleButton.isHidden = true
+	private func getFIRTasks(byParsingFirestoreSnapshot snapshot: QuerySnapshot?) -> [FIRTask]? {
+		return snapshot?.documents.map({ (snap) -> FIRTask in
+			return FIRTask(withKey: snap.documentID, dict: snap.data())
+		})
+	}
+	
+	func scrollToActiveDate(animated: Bool = false) {
+		DispatchQueue.main.async {
+			let section = self.calendarDates.firstIndex(of: self.activeDate) ?? self.todaySection
+			let row = 0
+			self.taskCalendarListView.scrollToRow(at: IndexPath(row: row, section: section), at: .top, animated: animated)
 		}
 	}
 	
-	fileprivate func bringFoucsToAddTaskField() {
-		
-		guard !todoListView.isEditing else {
-			return
+	func scrollToToday(animated: Bool = false) {
+		DispatchQueue.main.async {
+			self.taskCalendarListView.scrollToRow(at: IndexPath(row: 0, section: self.todaySection), at: .top, animated: animated)
 		}
-		
-		addTaskButton.isHidden = true
-		plusButton.isHidden = true
-		addTaskLabel.isHidden = true
-		addTaskTextField.isHidden = false
-		greyCircleButton.isHidden = false
-		addTaskTextField.becomeFirstResponder()
-	}
-}
-
-extension TaskListViewController: UITableViewDelegate, UITableViewDataSource {
-	
-	func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-		removeFoucsFromAddTaskField()
-	}
-	
-	func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-		return tasks.count
-	}
-	
-	func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-		
-		let cell = tableView.dequeueReusableCell(withIdentifier: "cell", for: indexPath) as? TodoCell
-		let todo = Todo(task: tasks[indexPath.row])
-		
-//		if tableView.isEditing {
-//			cell?.updateCell(with: todo)
-//		} else {
-			cell?.updateCell(with: todo, delegate: self, indexPath: indexPath)
-//		}
-								
-		return cell ?? UITableViewCell()
-	}
-	
-	func tableView(_ tableView: UITableView, editActionsForRowAt indexPath: IndexPath) -> [UITableViewRowAction]? {
-		let deleteAction = UITableViewRowAction(style: .destructive, title: "Delete") { (action, indexpath) in
-			self.deleteTodo(inRow: indexPath.row)
-//			self.promptDeleteAlert(for: indexPath)
-		}
-		deleteAction.backgroundColor = UIColor.red
-		return [deleteAction]
-	}
-	
-	func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-		removeFoucsFromAddTaskField()
 	}
 }
 
 extension TaskListViewController: TodoCellDelegate {
-	func didTodoCompleted(_ todo: Todo?, indexPath: IndexPath?) {
-		guard let _todo = todo, let _indexPath = indexPath else {
-			return
-		}
-		let task = tasks[_indexPath.row]
-		task.setTask(with: _todo)
-		NSManagedObjectContext.mr_default().mr_saveToPersistentStore(completion: nil)
-	}
 	
-	func didMoreMenuTapped(on indexPath: IndexPath?) {
-		guard let taskIndexPath = indexPath else {
-			return
-		}
-		promptDeleteAlert(for: taskIndexPath)
-	}
-}
-
-extension TaskListViewController: UIGestureRecognizerDelegate {
-	func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-		let location = touch.location(in: todoListView)
-		if todoListView.indexPathForRow(at: location) != nil {
-			return false
-		}
-		return true
-	}
-}
-
-extension TaskListViewController: UITextFieldDelegate {
-	
-	func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-		guard let text = textField.text, text.isNotEmpty else {
-			removeFoucsFromAddTaskField()
-			return true
-		}
-		add(todo: text)
-		textField.clear()
-		return true
-	}
-	
-	func add(todo title: String) {
-
-		let todo = Todo(title: title, date: activeDate)
-		
-		self.saveTodo(todo)
-		NSManagedObjectContext.mr_default().mr_saveToPersistentStore { (bool, nil) in
-			self.refetchTaskAndScrollToLastRow() 
-		}
-	}
-	
-	func refetchTasks() {
-		tasks = Task.getTasks(for: activeDate)
-		DispatchQueue.main.async {
-			self.todoListView.reloadData()
-			self.toggleEditButton()
-			self.toggleAddTaskButton()
-		}
-	}
-	
-	func refetchTaskAndScrollToLastRow() {
-		tasks = Task.getTasks(for: activeDate)
-		toggleEditButton()
-		DispatchQueue.main.async {
-			self.todoListView.reloadData()
-			let lastRow = self.todoListView.numberOfRows(inSection: 0) - 1
-			self.todoListView.scrollToRow(at: IndexPath(row: lastRow, section: 0), at: .bottom, animated: true)
-		}
-	}
-
-	func saveTodo(_ todo: Todo, in context: NSManagedObjectContext = NSManagedObjectContext.mr_default()) {
-		let task = Task(context: context)
-		task.setTask(with: todo)
-	}
-	
-	func promptDeleteAlert(for indexPath: IndexPath) {
-		let options = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
-
-		options.addAction(UIAlertAction(title: "Delete", style: .destructive, handler: { (action) in
-			self.deleteTodo(inRow: indexPath.row)
-		}))
-		options.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: { (action) in
-		}))
-		self.present(options, animated: true, completion: nil)
-	}
-	
-	func deleteTodo(inRow row: Int) {
-		let task = self.tasks[row]
-		task.mr_deleteEntity(in: .mr_default())
-		NSManagedObjectContext.mr_default().mr_saveToPersistentStore(completion: nil)
-		refetchTasks()
+	func didTaskCompleted(_ completed: Bool, indexPath: IndexPath) {
+		updateTask(on: indexPath, completed: completed)
 	}
 }
